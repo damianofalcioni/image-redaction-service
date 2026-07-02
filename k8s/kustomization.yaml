@@ -9,4 +9,4 @@ resources:
   # - ingress.yaml
 images:
   - name: ghcr.io/YOUR_ORG/image-redaction-service
-    newTag: 0.3.3
+    newTag: 0.3.4

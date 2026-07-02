@@ -1,6 +1,6 @@
 {
   "name": "image-redaction-service",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "REST and MCP service for blurring sensitive regions in images using normalized coordinates.",
   "type": "module",
   "main": "src/index.js",

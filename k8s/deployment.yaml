@@ -5,7 +5,7 @@ metadata:
   namespace: image-redaction
   labels:
     app.kubernetes.io/name: image-redaction-service
-    app.kubernetes.io/version: "0.3.3"
+    app.kubernetes.io/version: "0.3.4"
 spec:
   replicas: 2
   selector:
@@ -15,11 +15,11 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: image-redaction-service
-        app.kubernetes.io/version: "0.3.3"
+        app.kubernetes.io/version: "0.3.4"
     spec:
       containers:
         - name: image-redaction-service
-          image: ghcr.io/YOUR_ORG/image-redaction-service:0.3.3
+          image: ghcr.io/YOUR_ORG/image-redaction-service:0.3.4
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

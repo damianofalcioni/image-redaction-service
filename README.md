@@ -149,7 +149,7 @@ Response:
 ```json
 {
   "status": "ok",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "mcp": {
     "transport": "streamable-http",
     "path": "/mcp"
@@ -332,10 +332,10 @@ ghcr.io/<owner>/<repository>:latest
 For example, if the public repository is `damianofalcioni/image-redaction-service`, the published image for this version is:
 
 ```text
-ghcr.io/damianofalcioni/image-redaction-service:0.3.3
+ghcr.io/damianofalcioni/image-redaction-service:0.3.4
 ```
 
-The workflow runs on pushes to `main`, semantic version tags such as `v0.3.3`, and manual `workflow_dispatch` runs. It uses the built-in `GITHUB_TOKEN`, so no extra registry secret is required for publishing to the same GitHub repository package.
+The workflow runs on pushes to `main`, semantic version tags such as `v0.3.4`, and manual `workflow_dispatch` runs. It uses the built-in `GITHUB_TOKEN`, so no extra registry secret is required for publishing to the same GitHub repository package.
 
 After the first publish, change the package visibility to public in GitHub if you want Kubernetes to pull it without an `imagePullSecret`:
 
@@ -352,8 +352,8 @@ A ready-to-edit Kubernetes deployment is included in `k8s/`.
 Build and push the container image:
 
 ```bash
-docker build -t ghcr.io/YOUR_ORG/image-redaction-service:0.3.3 .
-docker push ghcr.io/YOUR_ORG/image-redaction-service:0.3.3
+docker build -t ghcr.io/YOUR_ORG/image-redaction-service:0.3.4 .
+docker push ghcr.io/YOUR_ORG/image-redaction-service:0.3.4
 ```
 
 Then update the image reference in `k8s/deployment.yaml` and deploy:

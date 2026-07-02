@@ -13,8 +13,8 @@ The same HTTP server exposes:
 Replace the registry path with your own registry:
 
 ```bash
-docker build -t ghcr.io/YOUR_ORG/image-redaction-service:0.3.3 .
-docker push ghcr.io/YOUR_ORG/image-redaction-service:0.3.3
+docker build -t ghcr.io/YOUR_ORG/image-redaction-service:0.3.4 .
+docker push ghcr.io/YOUR_ORG/image-redaction-service:0.3.4
 ```
 
 ## 2. Update the image in Kubernetes
@@ -22,7 +22,7 @@ docker push ghcr.io/YOUR_ORG/image-redaction-service:0.3.3
 Edit `k8s/deployment.yaml`, or use Kustomize:
 
 ```bash
-kubectl kustomize k8s | sed 's#ghcr.io/YOUR_ORG/image-redaction-service:0.3.3#YOUR_REGISTRY/image-redaction-service:0.3.3#g' | kubectl apply -f -
+kubectl kustomize k8s | sed 's#ghcr.io/YOUR_ORG/image-redaction-service:0.3.4#YOUR_REGISTRY/image-redaction-service:0.3.4#g' | kubectl apply -f -
 ```
 
 For a simple direct deployment after editing the image:

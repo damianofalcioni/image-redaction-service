@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Image Redaction Service API
-  version: 0.3.3
+  version: 0.3.4
   description: |
     REST API for blurring sensitive regions in images using normalized coordinates.
     The same service also exposes an MCP Streamable HTTP endpoint at /mcp.
@@ -35,7 +35,7 @@ paths:
                 ok:
                   value:
                     status: ok
-                    version: 0.3.3
+                    version: 0.3.4
                     mcp:
                       transport: streamable-http
                       path: /mcp
@@ -179,7 +179,7 @@ components:
         version:
           type: string
           examples:
-            - 0.3.3
+            - 0.3.4
         mcp:
           type: object
           required:
