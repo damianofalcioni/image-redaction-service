@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: image-redaction-service
+  namespace: image-redaction
+  labels:
+    app.kubernetes.io/name: image-redaction-service
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: image-redaction.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: image-redaction-service
+                port:
+                  number: 80
+  # Uncomment and configure cert-manager if TLS is available in your cluster.
+  # tls:
+  #   - hosts:
+  #       - image-redaction.example.com
+  #     secretName: image-redaction-service-tls

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: image-redaction-service
+  namespace: image-redaction
+  labels:
+    app.kubernetes.io/name: image-redaction-service
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: image-redaction-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

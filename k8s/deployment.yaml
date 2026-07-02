@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: image-redaction-service
+  namespace: image-redaction
+  labels:
+    app.kubernetes.io/name: image-redaction-service
+    app.kubernetes.io/version: "0.3.3"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: image-redaction-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: image-redaction-service
+        app.kubernetes.io/version: "0.3.3"
+    spec:
+      containers:
+        - name: image-redaction-service
+          image: ghcr.io/YOUR_ORG/image-redaction-service:0.3.3
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: image-redaction-service-config
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
