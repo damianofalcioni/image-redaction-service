@@ -1,7 +1,7 @@
 {
   "name": "image-redaction-service",
-  "version": "0.3.4",
-  "description": "REST and MCP service for blurring sensitive regions in images using normalized coordinates.",
+  "version": "0.4.0",
+  "description": "REST and MCP service for redacting sensitive image regions, batch image redaction, and PDF-to-JPEG conversion.",
   "type": "module",
   "main": "src/index.js",
   "private": true,
@@ -14,14 +14,16 @@
     "mcp:stdio": "node --env-file=.env src/mcp/stdio.js",
     "test": "node --test",
     "lint": "eslint .",
-    "check": "npm run lint && node --check src/index.js && node --check src/server.js && node --check src/config.js && node --check src/packageInfo.js && node --check src/http/validation.js && node --check src/image/errors.js && node --check src/image/sources.js && node --check src/image/blurSensitiveRegions.js && node --check src/mcp/http.js && node --check src/mcp/server.js && node --check src/mcp/stdio.js && node --check src/mcp/toolHandlers.js && node --check src/mcp/toolSchemas.js"
+    "check": "npm run lint && find src test test-support -name \"*.js\" -print0 | xargs -0 -n1 node --check"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "fastify": "^5.2.1",
     "sharp": "^0.33.5",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@napi-rs/canvas": "^1.0.2",
+    "pdfjs-dist": "4.10.38"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
@@ -29,6 +31,7 @@
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-sonarjs": "^4.1.0",
     "globals": "^15.14.0",
-    "ts-api-utils": "^2.1.0"
+    "ts-api-utils": "2.5.0",
+    "typescript": "5.9.3"
   }
 }

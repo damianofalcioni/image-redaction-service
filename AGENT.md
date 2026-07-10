@@ -2,206 +2,112 @@
 
 ## Project purpose
 
-This project exposes a small REST API, an MCP Streamable HTTP endpoint, and a local MCP stdio server that blur sensitive regions in images. Regions are provided with normalized coordinates, where `x`, `y`, `width`, and `height` are numbers between `0` and `1` relative to the image dimensions.
+This project exposes REST and MCP operations for:
 
-The main implementation lives in:
+1. redacting normalized sensitive regions in one image;
+2. redacting multiple images concurrently;
+3. converting every page of a PDF to a JPEG image.
 
-- `src/image/blurSensitiveRegions.js` — coordinate conversion, patch blurring, output encoding.
-- `src/image/sources.js` — image-source parsing, remote fetch handling, and input-size enforcement.
-- `src/image/errors.js` — shared image-redaction error type.
-- `src/server.js` — Fastify app and HTTP routes.
-- `src/mcp/server.js` — MCP server factory and tool registration.
-- `src/mcp/http.js` — Streamable HTTP transport adapter mounted on the Fastify server at `/mcp`.
-- `src/mcp/stdio.js` — stdio transport entry point for local MCP clients.
-- `src/mcp/toolHandlers.js` — MCP tool execution wrapper around the same image-redaction function.
-- `src/mcp/toolSchemas.js` — Zod schemas for MCP tool inputs.
-- `src/http/validation.js` — REST request validation and safe option normalization.
-- `src/config.js` — environment-based runtime configuration.
-- `.env` — committed default runtime environment values loaded by npm scripts.
-- `openapi.yaml` — OpenAPI 3.1 REST API description, also served by the HTTP server.
-- `src/packageInfo.js` — shared package-name/version reader for REST and MCP server metadata.
-- `eslint.config.js` — ESLint v9 flat configuration for this ES-module project.
+The public package version is read from `package.json`; keep it aligned with `openapi.yaml`, Kubernetes labels, examples, and release documentation.
 
-## Development rules
+## Main implementation files
 
-Use modern Node.js ES modules only. Do not introduce CommonJS `require`, `module.exports`, or mixed module formats.
+- `src/image/blurSensitiveRegions.js` — single-image normalization, blur, composition, and encoding.
+- `src/image/batchRedaction.js` — bounded concurrent batch execution with stable result order.
+- `src/image/sources.js` — Buffer, base64, data URL, and remote source loading with byte limits.
+- `src/image/errors.js` — shared service error type.
+- `src/pdf/convertPdfToJpeg.js` — PDF.js page rendering through `@napi-rs/canvas`.
+- `src/http/validation.js` — shared REST and MCP request parsing and safe option normalization.
+- `src/server.js` — Fastify routes, logging redaction, and response shaping.
+- `src/mcp/server.js` — MCP tool registration.
+- `src/mcp/toolHandlers.js` — MCP execution and content-block response construction.
+- `src/mcp/toolSchemas.js` — Zod input schemas for all MCP tools.
+- `src/mcp/http.js` — stateless MCP Streamable HTTP adapter.
+- `src/mcp/stdio.js` — local MCP stdio entry point.
+- `src/config.js` — environment configuration.
+- `openapi.yaml` — REST API contract served at `/openapi.yaml`.
 
-Keep the core image function usable outside the REST service. The exported function `blurSensitiveRegionsNode(imageSource, regions, options)` must remain callable directly from another Node.js module.
+## Public REST contract
 
-Do not log image payloads, base64 strings, data URLs, authorization headers, or generated image outputs. These values may contain sensitive data.
+- `POST /v1/images/blur-sensitive-regions`
+- `POST /v1/images/blur-sensitive-regions/batch`
+- `POST /v1/pdfs/to-jpeg`
+- `POST /mcp`
+- `GET /health`
+- `GET /openapi.yaml`
 
-Do not add filesystem path loading unless explicitly requested. The supported image inputs are Buffer, raw base64, data URL, and remote HTTP/HTTPS URL. The REST endpoint accepts string inputs only.
+The batch request contains `images`, where every item has the same fields as the single-image request plus an optional string `id`. Results must preserve request order. Batch processing is all-or-nothing unless a future API version explicitly adds partial-result semantics.
 
-Keep remote URL fetching disabled by default in the REST service. Remote fetching is controlled by `ALLOW_REMOTE_IMAGE_SOURCE=true` because arbitrary URL fetching can create SSRF exposure.
-
-## Commands
-
-Install dependencies:
-
-```bash
-npm install
-```
-
-Run the service with the committed default `.env` values:
-
-```bash
-npm start
-```
-
-Run in watch mode:
-
-```bash
-npm run dev
-```
-
-Run MCP over the same HTTP server:
-
-```bash
-npm start
-```
-
-HTTP MCP endpoint:
-
-```text
-POST /mcp
-```
-
-Run MCP stdio server:
-
-```bash
-npm run mcp:stdio
-```
-
-Run tests:
-
-```bash
-npm test
-```
-
-Run lint:
-
-```bash
-npm run lint
-```
-
-Run all checks:
-
-```bash
-npm run check
-```
+The PDF endpoint returns one JPEG per page, ordered by `pageNumber`, starting at 1.
 
 ## MCP contract
 
-MCP tool name:
+Registered tools:
 
-```text
-blur_sensitive_regions
+- `blur_sensitive_regions`
+- `blur_sensitive_regions_batch`
+- `convert_pdf_to_jpeg`
+
+Keep REST parsing, MCP parsing, runtime behavior, tool schemas, and OpenAPI documentation aligned. Reuse `src/http/validation.js` for both REST and MCP rather than duplicating security rules.
+
+MCP image-generating tools return metadata as text, generated images as MCP image content blocks, and data URL or raw-base64 payloads in `structuredContent`.
+
+## Development rules
+
+- Use ES modules only.
+- Keep the direct functions independently importable.
+- Do not add filesystem-path source loading unless explicitly requested.
+- Do not log image content, PDFs, generated outputs, base64, data URLs, or authorization headers.
+- Keep remote fetching guarded by separate image and PDF configuration switches.
+- Restrict forwarded fetch headers to Authorization, Accept, and User-Agent.
+- Preserve byte, batch, region, page, timeout, scale, quality, and concurrency limits.
+- Use bounded concurrency for batch images.
+- Render PDF pages sequentially unless memory-safe bounded page concurrency is deliberately introduced and tested.
+- Do not require external PDF executables; the current implementation is self-contained in Node.js dependencies.
+- Keep the TypeScript dev dependency pinned to `5.9.3` while `eslint-plugin-sonarjs` is incompatible with TypeScript 7's removed `SyntaxKind.FunctionType` alias.
+
+## Commands
+
+```bash
+npm install
+npm start
+npm run dev
+npm run mcp:stdio
+npm test
+npm run lint
+npm run check
 ```
 
-The MCP tool accepts the same request shape as the REST endpoint. It returns metadata as text, the image as an MCP image content block, and metadata plus `image` in `structuredContent`.
+## Configuration
 
-For HTTP MCP, keep `/mcp` stateless unless stateful sessions are explicitly requested. The current service supports request/response tool calls and intentionally returns `405` for `GET /mcp` and `DELETE /mcp`.
+- `MAX_IMAGE_BYTES`
+- `MAX_REGIONS`
+- `MAX_BATCH_IMAGES`
+- `BATCH_CONCURRENCY`
+- `MAX_PDF_BYTES`
+- `MAX_PDF_PAGES`
+- `FETCH_TIMEOUT_MS`
+- `ALLOW_REMOTE_IMAGE_SOURCE`
+- `ALLOW_REMOTE_PDF_SOURCE`
+- `CORS_ORIGIN`
 
-For stdio MCP servers, never write logs or diagnostic messages to stdout. Stdout is reserved for MCP protocol messages. Use stderr only for fatal startup errors.
-
-## API contract
-
-OpenAPI endpoint:
-
-```text
-GET /openapi.yaml
-```
-
-Main endpoint:
-
-```text
-POST /v1/images/blur-sensitive-regions
-```
-
-Request body:
-
-```json
-{
-  "imageSource": "data:image/jpeg;base64,...",
-  "regions": [
-    {
-      "x": 0.1,
-      "y": 0.2,
-      "width": 0.3,
-      "height": 0.15,
-      "paddingPixels": 8,
-      "blurRadius": 18
-    }
-  ],
-  "options": {
-    "blurRadius": 14,
-    "outputType": "image/jpeg",
-    "quality": 92,
-    "returnDataUrl": true,
-    "inputMimeType": "image/jpeg",
-    "regionPaddingPixels": 0
-  }
-}
-```
-
-Response body:
-
-```json
-{
-  "image": "data:image/jpeg;base64,...",
-  "mimeType": "image/jpeg",
-  "outputFormat": "jpeg",
-  "width": 1920,
-  "height": 1080,
-  "regionsProcessed": 1
-}
-```
-
-## Image engine decision
-
-The project currently uses Sharp. Sharp is not the smallest dependency, but for server-side image decoding, region extraction, blur, composition, and re-encoding, it is the best default choice in Node.js because it is fast, memory-conscious, and supports JPEG, PNG, WebP, and AVIF.
-
-Do not replace Sharp with a pure JavaScript image library unless the new requirement prioritizes install size over performance and output quality. Most pure JavaScript alternatives are easier to install but slower and less suitable for production image processing.
-
-If a future image engine is added, keep it behind a small adapter boundary and preserve the public function/API contract.
-
-## Validation and security constraints
-
-- Reject malformed regions before image processing.
-- Preserve normalized coordinate semantics.
-- Clamp pixel coordinates to image boundaries.
-- Keep maximum input size enforced with `MAX_IMAGE_BYTES`.
-- Keep maximum region count enforced with `MAX_REGIONS`.
-- Keep fetch timeout enforced with `FETCH_TIMEOUT_MS`.
-- Do not allow arbitrary request headers for remote fetches; only safe headers should pass validation.
-- Do not return stack traces or internal error details to API clients.
-- Keep the MCP tool, REST endpoint, and `openapi.yaml` behavior aligned. Add validation changes to both runtime paths by reusing shared code where possible, and update the OpenAPI schema when the REST contract changes.
+The committed `.env` enables remote sources for local use. Kubernetes examples keep them disabled for safer deployment defaults.
 
 ## Testing expectations
 
-Tests use Node's built-in `node:test` runner. Add tests for:
+Use Node's built-in `node:test` runner. Tests should cover direct functions, REST endpoints, MCP handlers, MCP HTTP discovery/calls, invalid inputs, resource limits, output ordering, output formats, and metadata.
 
-- Direct function usage.
-- REST endpoint success.
-- Invalid regions.
-- Remote URL behavior.
-- Output format conversion.
-- MCP Streamable HTTP tool discovery through `POST /mcp`.
+Generate small images and PDF fixtures in memory. Keep fixtures outside the `test/` discovery directory when they do not contain tests.
 
-Keep tests deterministic. Generate small in-memory images with Sharp rather than committing binary fixtures unless a binary fixture is strictly necessary.
+## Container and Kubernetes
 
-## GitHub Actions container publishing
+The Docker image must copy `package-lock.json`, source code, OpenAPI, README, and AGENT documentation. Production installation must exclude dev dependencies.
 
-The workflow file lives at `.github/workflows/container.yml`. It builds the Dockerfile/OCI image and publishes it to GitHub Container Registry as `ghcr.io/<owner>/<repository>`. The version tag is read from `package.json`, so update `package.json` before cutting a release archive.
+Keep these files aligned with environment additions and version changes:
 
-Keep the workflow image naming repository-based unless the repository name changes. If the image name is changed, update the Kubernetes examples and README at the same time.
-
-## Kubernetes notes
-
-- Kubernetes manifests live in `k8s/`.
-- Keep the placeholder image `ghcr.io/YOUR_ORG/image-redaction-service:<version>` out of committed production overlays; replace it with the real registry image before deployment.
-- The HTTP server exposes REST and MCP over the same container port, `3000`.
-- `GET /health` is used for liveness and readiness probes.
-- `GET /openapi.yaml` requires `openapi.yaml` to be copied into the Docker image.
-- Runtime defaults are mirrored in `k8s/configmap.yaml`; keep them aligned with `.env`.
-- Keep `ALLOW_REMOTE_IMAGE_SOURCE=false` by default to avoid SSRF exposure.
+- `.env`
+- `k8s/configmap.yaml`
+- `k8s/deployment.yaml`
+- `README.md`
+- `openapi.yaml`
+- `.github/workflows/container.yml`

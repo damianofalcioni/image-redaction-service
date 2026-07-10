@@ -26,6 +26,17 @@ function createStatelessTransport() {
   });
 }
 
+
+function ensureSocketCompatibility(socket) {
+  if (socket && typeof socket.destroySoon !== 'function') {
+    socket.destroySoon = () => {
+      if (typeof socket.destroy === 'function') {
+        socket.destroy();
+      }
+    };
+  }
+}
+
 function sendJsonResponse(rawResponse, statusCode, payload) {
   if (rawResponse.headersSent) return;
 
@@ -51,6 +62,9 @@ export function sendMethodNotAllowed(reply) {
 
 export async function handleMcpHttpRequest(request, reply, config, packageInfo) {
   reply.hijack();
+
+  ensureSocketCompatibility(request.raw.socket);
+  ensureSocketCompatibility(reply.raw.socket);
 
   const server = createMcpServer(config, packageInfo);
   const transport = createStatelessTransport();

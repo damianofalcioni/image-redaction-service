@@ -1,0 +1,8 @@
+{
+  "pdfSource": "data:application/pdf;base64,...",
+  "options": {
+    "quality": 90,
+    "scale": 2,
+    "returnDataUrl": true
+  }
+}

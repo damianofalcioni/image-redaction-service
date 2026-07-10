@@ -1,10 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
-import { blurSensitiveRegionsNode, ImageRedactionError } from './image/blurSensitiveRegions.js';
-import { parseBlurRequest } from './http/validation.js';
+import { parseBatchBlurRequest, parseBlurRequest, parsePdfToJpegRequest } from './http/validation.js';
+import { blurSensitiveRegionsBatch } from './image/batchRedaction.js';
+import { blurSensitiveRegionsNode } from './image/blurSensitiveRegions.js';
+import { ImageRedactionError } from './image/errors.js';
 import { handleMcpHttpRequest, sendMethodNotAllowed } from './mcp/http.js';
 import { readPackageInfo } from './packageInfo.js';
+import { convertPdfToJpeg } from './pdf/convertPdfToJpeg.js';
 
 const OPENAPI_PATH = new URL('../openapi.yaml', import.meta.url);
 
@@ -14,8 +17,13 @@ function createAppInstance(config) {
       level: config.logLevel,
       redact: [
         'req.body.imageSource',
+        'req.body.images[*].imageSource',
+        'req.body.pdfSource',
         'req.body.options.fetchHeaders.authorization',
+        'req.body.images[*].options.fetchHeaders.authorization',
         'res.body.image',
+        'res.body.images[*].image',
+        'res.body.pages[*].image',
         'res.body.base64',
         'res.body.dataUrl'
       ]
@@ -55,13 +63,17 @@ function registerHealthRoute(app, serviceInfo) {
   app.get('/health', async () => ({
     status: 'ok',
     version: serviceInfo.version,
+    capabilities: {
+      singleImageRedaction: true,
+      batchImageRedaction: true,
+      pdfToJpeg: true
+    },
     mcp: {
       transport: 'streamable-http',
       path: '/mcp'
     }
   }));
 }
-
 
 function registerOpenApiRoute(app) {
   app.get('/openapi.yaml', async (_request, reply) => {
@@ -85,20 +97,68 @@ function registerMcpRoutes(app, config, serviceInfo) {
   });
 }
 
-function registerBlurRoute(app, config) {
+function toImageResponse(result) {
+  return {
+    ...(result.id === undefined ? {} : { id: result.id }),
+    image: result.image,
+    mimeType: result.mimeType,
+    outputFormat: result.outputFormat,
+    width: result.width,
+    height: result.height,
+    regionsProcessed: result.regionsProcessed
+  };
+}
+
+function registerImageRoutes(app, config) {
   app.post('/v1/images/blur-sensitive-regions', async (request) => {
     const parsed = parseBlurRequest(request.body, config);
     const result = await blurSensitiveRegionsNode(parsed.imageSource, parsed.regions, parsed.options);
 
-    return {
-      image: result.image,
-      mimeType: result.mimeType,
-      outputFormat: result.outputFormat,
-      width: result.width,
-      height: result.height,
-      regionsProcessed: result.regionsProcessed
-    };
+    return toImageResponse(result);
   });
+
+  app.post(
+    '/v1/images/blur-sensitive-regions/batch',
+    {
+      bodyLimit: config.maxImageBytes * config.maxBatchImages * 2
+    },
+    async (request) => {
+      const parsed = parseBatchBlurRequest(request.body, config);
+      const result = await blurSensitiveRegionsBatch(parsed.images, parsed.options);
+
+      return {
+        images: result.images.map(toImageResponse),
+        imagesProcessed: result.imagesProcessed,
+        regionsProcessed: result.regionsProcessed
+      };
+    }
+  );
+}
+
+function registerPdfRoutes(app, config) {
+  app.post(
+    '/v1/pdfs/to-jpeg',
+    {
+      bodyLimit: config.maxPdfBytes * 2
+    },
+    async (request) => {
+      const parsed = parsePdfToJpegRequest(request.body, config);
+      const result = await convertPdfToJpeg(parsed.pdfSource, parsed.options);
+
+      return {
+        pages: result.pages.map((page) => ({
+          pageNumber: page.pageNumber,
+          image: page.image,
+          mimeType: page.mimeType,
+          width: page.width,
+          height: page.height
+        })),
+        totalPages: result.totalPages,
+        pagesConverted: result.pagesConverted,
+        mimeType: result.mimeType
+      };
+    }
+  );
 }
 
 export async function buildApp(config, packageInfo) {
@@ -110,7 +170,8 @@ export async function buildApp(config, packageInfo) {
   registerHealthRoute(app, serviceInfo);
   registerOpenApiRoute(app);
   registerMcpRoutes(app, config, serviceInfo);
-  registerBlurRoute(app, config);
+  registerImageRoutes(app, config);
+  registerPdfRoutes(app, config);
 
   return app;
 }

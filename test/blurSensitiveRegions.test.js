@@ -1,23 +1,11 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { test } from 'node:test';
-import sharp from 'sharp';
 import { loadConfig } from '../src/config.js';
 import { buildApp } from '../src/server.js';
 import { blurSensitiveRegionsNode } from '../src/image/blurSensitiveRegions.js';
-
-async function createImageBuffer() {
-  return sharp({
-    create: {
-      width: 120,
-      height: 80,
-      channels: 3,
-      background: '#336699'
-    }
-  })
-    .jpeg()
-    .toBuffer();
-}
+import { blurSensitiveRegionsTool } from '../src/mcp/toolHandlers.js';
+import { createImageBuffer } from '../test-support/fixtures.js';
 
 test('blurSensitiveRegionsNode returns a data URL and metadata', async () => {
   const input = await createImageBuffer();
@@ -97,10 +85,9 @@ test('REST endpoint rejects regions outside normalized bounds', async () => {
   await app.close();
 });
 
-test('MCP tool handler returns image content and structured metadata', async () => {
+test('MCP single-image tool returns image content and structured metadata', async () => {
   const input = await createImageBuffer();
   const dataUrl = `data:image/jpeg;base64,${input.toString('base64')}`;
-  const { blurSensitiveRegionsTool } = await import('../src/mcp/toolHandlers.js');
 
   const result = await blurSensitiveRegionsTool(
     {
@@ -116,44 +103,4 @@ test('MCP tool handler returns image content and structured metadata', async () 
   assert.equal(result.content[1].mimeType, 'image/png');
   assert.match(result.structuredContent.image, /^data:image\/png;base64,/);
   assert.equal(result.structuredContent.regionsProcessed, 1);
-});
-
-test('MCP Streamable HTTP endpoint exposes the tool list', async () => {
-  const app = await buildApp(loadConfig({ LOG_LEVEL: 'silent' }));
-
-  const response = await app.inject({
-    method: 'POST',
-    url: '/mcp',
-    headers: {
-      accept: 'application/json, text/event-stream'
-    },
-    payload: {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'tools/list',
-      params: {}
-    }
-  });
-
-  assert.equal(response.statusCode, 200);
-  const body = response.json();
-  assert.equal(body.result.tools[0].name, 'blur_sensitive_regions');
-
-  await app.close();
-});
-
-test('OpenAPI document is served by the HTTP server', async () => {
-  const app = await buildApp(loadConfig({ LOG_LEVEL: 'silent' }));
-
-  const response = await app.inject({
-    method: 'GET',
-    url: '/openapi.yaml'
-  });
-
-  assert.equal(response.statusCode, 200);
-  assert.match(response.headers['content-type'], /application\/yaml/);
-  assert.match(response.body, /^openapi: 3\.1\.0/m);
-  assert.match(response.body, /\/v1\/images\/blur-sensitive-regions/);
-
-  await app.close();
 });

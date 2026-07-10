@@ -1,10 +1,11 @@
 openapi: 3.1.0
 info:
   title: Image Redaction Service API
-  version: 0.3.4
+  version: 0.4.0
   description: |
-    REST API for blurring sensitive regions in images using normalized coordinates.
-    The same service also exposes an MCP Streamable HTTP endpoint at /mcp.
+    REST API for redacting sensitive regions in one or more images and converting
+    each page of a PDF document to a JPEG image. The same capabilities are also
+    exposed through MCP Streamable HTTP at /mcp.
 servers:
   - url: http://localhost:3000
     description: Local development server
@@ -12,7 +13,9 @@ tags:
   - name: Health
     description: Service status endpoints.
   - name: Images
-    description: Image redaction operations.
+    description: Single-image and batch image redaction operations.
+  - name: PDFs
+    description: PDF rendering operations.
   - name: MCP
     description: MCP Streamable HTTP endpoint.
   - name: Documentation
@@ -20,10 +23,9 @@ tags:
 paths:
   /health:
     get:
-      tags:
-        - Health
+      tags: [Health]
       operationId: getHealth
-      summary: Get service health and version metadata.
+      summary: Get service health, version, and capability metadata.
       responses:
         '200':
           description: Service is healthy.
@@ -31,18 +33,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
-              examples:
-                ok:
-                  value:
-                    status: ok
-                    version: 0.3.4
-                    mcp:
-                      transport: streamable-http
-                      path: /mcp
   /openapi.yaml:
     get:
-      tags:
-        - Documentation
+      tags: [Documentation]
       operationId: getOpenApiYaml
       summary: Get the OpenAPI document for the REST service.
       responses:
@@ -54,36 +47,18 @@ paths:
                 type: string
   /v1/images/blur-sensitive-regions:
     post:
-      tags:
-        - Images
+      tags: [Images]
       operationId: blurSensitiveRegions
-      summary: Blur sensitive regions in an image.
+      summary: Blur sensitive regions in one image.
       description: |
-        Accepts an image as a data URL or raw base64 string and a list of normalized
-        regions. Remote HTTP/HTTPS image URLs are rejected unless
-        ALLOW_REMOTE_IMAGE_SOURCE=true is set.
+        Accepts an image as a data URL, raw base64, or a remote URL when remote
+        image fetching is enabled. Region coordinates are normalized from 0 to 1.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/BlurSensitiveRegionsRequest'
-            examples:
-              dataUrlJpeg:
-                summary: Blur a region in a JPEG data URL and return WebP.
-                value:
-                  imageSource: data:image/jpeg;base64,...
-                  regions:
-                    - x: 0.12
-                      y: 0.18
-                      width: 0.32
-                      height: 0.12
-                      paddingPixels: 8
-                      blurRadius: 18
-                  options:
-                    outputType: image/webp
-                    quality: 90
-                    returnDataUrl: true
       responses:
         '200':
           description: Redacted image and processing metadata.
@@ -91,15 +66,64 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BlurSensitiveRegionsResponse'
-              examples:
-                success:
-                  value:
-                    image: data:image/webp;base64,...
-                    mimeType: image/webp
-                    outputFormat: webp
-                    width: 1920
-                    height: 1080
-                    regionsProcessed: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /v1/images/blur-sensitive-regions/batch:
+    post:
+      tags: [Images]
+      operationId: blurSensitiveRegionsBatch
+      summary: Blur sensitive regions in multiple images concurrently.
+      description: |
+        Processes multiple image requests concurrently while preserving input order.
+        Each image can have its own identifier, regions, output format, and options.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchBlurRequest'
+      responses:
+        '200':
+          description: One redacted result per input image.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchBlurResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /v1/pdfs/to-jpeg:
+    post:
+      tags: [PDFs]
+      operationId: convertPdfToJpeg
+      summary: Convert every PDF page to one JPEG image.
+      description: |
+        Accepts a PDF data URL, raw base64, or a remote URL when remote PDF fetching
+        is enabled. The response contains one JPEG payload per page in page order.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PdfToJpegRequest'
+      responses:
+        '200':
+          description: JPEG images generated from the PDF pages.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PdfToJpegResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '408':
@@ -110,13 +134,12 @@ paths:
           $ref: '#/components/responses/InternalServerError'
   /mcp:
     post:
-      tags:
-        - MCP
+      tags: [MCP]
       operationId: postMcp
       summary: MCP Streamable HTTP endpoint.
       description: |
-        Stateless MCP Streamable HTTP endpoint for JSON-RPC requests, including
-        tools/list and tools/call for the blur_sensitive_regions MCP tool.
+        Stateless MCP endpoint exposing blur_sensitive_regions,
+        blur_sensitive_regions_batch, and convert_pdf_to_jpeg.
       parameters:
         - name: Accept
           in: header
@@ -130,14 +153,6 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/JsonRpcRequest'
-            examples:
-              toolsList:
-                summary: List MCP tools.
-                value:
-                  jsonrpc: '2.0'
-                  id: 1
-                  method: tools/list
-                  params: {}
       responses:
         '200':
           description: MCP JSON-RPC response.
@@ -148,16 +163,14 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
     get:
-      tags:
-        - MCP
+      tags: [MCP]
       operationId: getMcp
       summary: Unsupported for this stateless MCP endpoint.
       responses:
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
     delete:
-      tags:
-        - MCP
+      tags: [MCP]
       operationId: deleteMcp
       summary: Unsupported for this stateless MCP endpoint.
       responses:
@@ -167,72 +180,72 @@ components:
   schemas:
     HealthResponse:
       type: object
-      required:
-        - status
-        - version
-        - mcp
+      required: [status, version, capabilities, mcp]
       properties:
         status:
           type: string
-          enum:
-            - ok
+          enum: [ok]
         version:
           type: string
-          examples:
-            - 0.3.4
+          examples: [0.4.0]
+        capabilities:
+          type: object
+          required: [singleImageRedaction, batchImageRedaction, pdfToJpeg]
+          properties:
+            singleImageRedaction:
+              type: boolean
+            batchImageRedaction:
+              type: boolean
+            pdfToJpeg:
+              type: boolean
         mcp:
           type: object
-          required:
-            - transport
-            - path
+          required: [transport, path]
           properties:
             transport:
               type: string
-              enum:
-                - streamable-http
+              enum: [streamable-http]
             path:
               type: string
-              enum:
-                - /mcp
+              enum: [/mcp]
+    FetchHeaders:
+      type: object
+      description: Only Authorization, Accept, and User-Agent headers are accepted.
+      additionalProperties:
+        type: string
     Region:
       type: object
       additionalProperties: false
-      required:
-        - x
-        - y
-        - width
-        - height
+      required: [x, y, width, height]
       properties:
         x:
           type: number
           minimum: 0
           maximum: 1
-          description: Normalized left coordinate, left divided by image width.
+          description: Normalized left coordinate.
         y:
           type: number
           minimum: 0
           maximum: 1
-          description: Normalized top coordinate, top divided by image height.
+          description: Normalized top coordinate.
         width:
           type: number
           exclusiveMinimum: 0
           maximum: 1
-          description: Normalized region width, region width divided by image width.
+          description: Normalized region width.
         height:
           type: number
           exclusiveMinimum: 0
           maximum: 1
-          description: Normalized region height, region height divided by image height.
+          description: Normalized region height.
         paddingPixels:
           type: integer
           minimum: 0
           maximum: 500
-          description: Optional pixel padding added around this region.
         blurRadius:
           type: number
           minimum: 0.3
           maximum: 100
-          description: Optional blur radius for this region only.
     BlurOptions:
       type: object
       additionalProperties: false
@@ -242,52 +255,36 @@ components:
           minimum: 0.3
           maximum: 100
           default: 14
-          description: Default blur radius for all regions.
         outputType:
           type: string
-          enum:
-            - image/jpeg
-            - image/jpg
-            - image/png
-            - image/webp
-            - image/avif
+          enum: [image/jpeg, image/jpg, image/png, image/webp, image/avif]
           default: image/jpeg
-          description: Output MIME type.
         quality:
           type: integer
           minimum: 1
           maximum: 100
           default: 92
-          description: JPEG, WebP, or AVIF quality.
         returnDataUrl:
           type: boolean
           default: true
-          description: Return image as a data URL when true, or raw base64 when false.
         inputMimeType:
           type: string
           default: image/jpeg
-          description: Fallback MIME type for raw base64 input.
         regionPaddingPixels:
           type: integer
           minimum: 0
           maximum: 500
           default: 0
-          description: Default pixel padding around all regions.
         fetchHeaders:
-          type: object
-          description: Restricted remote-fetch headers. Remote URLs are disabled unless enabled by environment.
-          additionalProperties:
-            type: string
+          $ref: '#/components/schemas/FetchHeaders'
     BlurSensitiveRegionsRequest:
       type: object
       additionalProperties: false
-      required:
-        - imageSource
-        - regions
+      required: [imageSource, regions]
       properties:
         imageSource:
           type: string
-          description: Raw base64 image, data URL, or HTTP/HTTPS URL when remote fetching is enabled.
+          description: Raw base64, data URL, or HTTP/HTTPS URL when enabled.
         regions:
           type: array
           minItems: 1
@@ -296,33 +293,51 @@ components:
             $ref: '#/components/schemas/Region'
         options:
           $ref: '#/components/schemas/BlurOptions'
+    BatchBlurItem:
+      type: object
+      additionalProperties: false
+      required: [imageSource, regions]
+      properties:
+        id:
+          type: string
+          description: Optional caller-defined identifier returned unchanged.
+        imageSource:
+          type: string
+          description: Raw base64, data URL, or HTTP/HTTPS URL when enabled.
+        regions:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/Region'
+        options:
+          $ref: '#/components/schemas/BlurOptions'
+    BatchBlurRequest:
+      type: object
+      additionalProperties: false
+      required: [images]
+      properties:
+        images:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/BatchBlurItem'
     BlurSensitiveRegionsResponse:
       type: object
-      required:
-        - image
-        - mimeType
-        - outputFormat
-        - width
-        - height
-        - regionsProcessed
+      required: [image, mimeType, outputFormat, width, height, regionsProcessed]
       properties:
+        id:
+          type: string
         image:
           type: string
-          description: Redacted output image as a data URL or raw base64.
+          description: Output image as a data URL or raw base64.
         mimeType:
           type: string
-          enum:
-            - image/jpeg
-            - image/png
-            - image/webp
-            - image/avif
+          enum: [image/jpeg, image/png, image/webp, image/avif]
         outputFormat:
           type: string
-          enum:
-            - jpeg
-            - png
-            - webp
-            - avif
+          enum: [jpeg, png, webp, avif]
         width:
           type: integer
           minimum: 1
@@ -332,35 +347,105 @@ components:
         regionsProcessed:
           type: integer
           minimum: 0
+    BatchBlurResponse:
+      type: object
+      required: [images, imagesProcessed, regionsProcessed]
+      properties:
+        images:
+          type: array
+          items:
+            $ref: '#/components/schemas/BlurSensitiveRegionsResponse'
+        imagesProcessed:
+          type: integer
+          minimum: 1
+        regionsProcessed:
+          type: integer
+          minimum: 0
+    PdfOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        quality:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 90
+        scale:
+          type: number
+          minimum: 0.1
+          maximum: 4
+          default: 2
+          description: Rendering scale applied to each page.
+        returnDataUrl:
+          type: boolean
+          default: true
+        fetchHeaders:
+          $ref: '#/components/schemas/FetchHeaders'
+    PdfToJpegRequest:
+      type: object
+      additionalProperties: false
+      required: [pdfSource]
+      properties:
+        pdfSource:
+          type: string
+          description: Raw base64 PDF, PDF data URL, or HTTP/HTTPS URL when enabled.
+        options:
+          $ref: '#/components/schemas/PdfOptions'
+    PdfPage:
+      type: object
+      required: [pageNumber, image, mimeType, width, height]
+      properties:
+        pageNumber:
+          type: integer
+          minimum: 1
+        image:
+          type: string
+          description: JPEG page image as a data URL or raw base64.
+        mimeType:
+          type: string
+          enum: [image/jpeg]
+        width:
+          type: integer
+          minimum: 1
+        height:
+          type: integer
+          minimum: 1
+    PdfToJpegResponse:
+      type: object
+      required: [pages, totalPages, pagesConverted, mimeType]
+      properties:
+        pages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PdfPage'
+        totalPages:
+          type: integer
+          minimum: 1
+        pagesConverted:
+          type: integer
+          minimum: 1
+        mimeType:
+          type: string
+          enum: [image/jpeg]
     ErrorResponse:
       type: object
-      required:
-        - error
+      required: [error]
       properties:
         error:
           type: object
-          required:
-            - code
-            - message
+          required: [code, message]
           properties:
             code:
               type: string
-              examples:
-                - INVALID_REGION
             message:
               type: string
-              examples:
-                - regions[0] must fit inside the normalized image bounds.
     JsonRpcRequest:
       type: object
-      required:
-        - jsonrpc
-        - method
+      required: [jsonrpc, method]
       properties:
         jsonrpc:
           type: string
-          enum:
-            - '2.0'
+          enum: ['2.0']
         id:
           oneOf:
             - type: string
@@ -368,22 +453,17 @@ components:
             - type: 'null'
         method:
           type: string
-          examples:
-            - tools/list
-            - tools/call
         params:
           type: object
           additionalProperties: true
       additionalProperties: true
     JsonRpcResponse:
       type: object
-      required:
-        - jsonrpc
+      required: [jsonrpc]
       properties:
         jsonrpc:
           type: string
-          enum:
-            - '2.0'
+          enum: ['2.0']
         id:
           oneOf:
             - type: string
@@ -394,9 +474,7 @@ components:
           additionalProperties: true
         error:
           type: object
-          required:
-            - code
-            - message
+          required: [code, message]
           properties:
             code:
               type: integer
@@ -405,19 +483,19 @@ components:
       additionalProperties: true
   responses:
     BadRequest:
-      description: Invalid request or invalid image input.
+      description: Invalid request, image, or PDF input.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     RequestTimeout:
-      description: Remote image fetch timed out.
+      description: Remote source fetch timed out.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     PayloadTooLarge:
-      description: Image input or region count exceeds service limits.
+      description: Input size, batch size, region count, or PDF page count exceeds configured limits.
       content:
         application/json:
           schema:

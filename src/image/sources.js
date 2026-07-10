@@ -1,6 +1,19 @@
 import { Buffer } from 'node:buffer';
 import { ImageRedactionError } from './errors.js';
 
+const DEFAULT_SOURCE_CONTEXT = {
+  label: 'Image',
+  remoteLabel: 'Remote image',
+  unsupportedMessage: 'Unsupported imageSource type.',
+  remoteDisabledMessage: 'Remote image URLs are disabled. Set ALLOW_REMOTE_IMAGE_SOURCE=true to enable them.',
+  remoteDisabledCode: 'REMOTE_SOURCE_DISABLED',
+  fetchTimeoutCode: 'IMAGE_FETCH_TIMEOUT',
+  fetchFailedCode: 'IMAGE_FETCH_FAILED',
+  fetchUnavailableCode: 'FETCH_UNAVAILABLE',
+  invalidDataUrlCode: 'INVALID_DATA_URL',
+  tooLargeCode: 'IMAGE_TOO_LARGE'
+};
+
 function isHttpUrl(value) {
   return typeof value === 'string' && /^https?:\/\//i.test(value);
 }
@@ -17,33 +30,40 @@ function normalizeContentType(value, fallback) {
   return value.split(';')[0]?.trim().toLowerCase() || fallback;
 }
 
-function assertImageSize(byteLength, maxInputBytes, label = 'Image') {
+function normalizeContext(context = {}) {
+  return {
+    ...DEFAULT_SOURCE_CONTEXT,
+    ...context
+  };
+}
+
+function assertSourceSize(byteLength, maxInputBytes, context, label = context.label) {
   if (byteLength > maxInputBytes) {
     throw new ImageRedactionError(
       `${label} is too large. Maximum allowed size is ${maxInputBytes} bytes.`,
       413,
-      'IMAGE_TOO_LARGE'
+      context.tooLargeCode
     );
   }
 }
 
-function assertRemoteContentLength(response, maxInputBytes) {
+function assertRemoteContentLength(response, maxInputBytes, context) {
   const contentLength = Number(response.headers.get('content-length'));
 
   if (Number.isFinite(contentLength)) {
-    assertImageSize(contentLength, maxInputBytes, 'Remote image');
+    assertSourceSize(contentLength, maxInputBytes, context, context.remoteLabel);
   }
 }
 
-async function bufferFromArrayBufferWithLimit(response, maxInputBytes) {
+async function bufferFromArrayBufferWithLimit(response, maxInputBytes, context) {
   const arrayBuffer = await response.arrayBuffer();
 
-  assertImageSize(arrayBuffer.byteLength, maxInputBytes);
+  assertSourceSize(arrayBuffer.byteLength, maxInputBytes, context);
 
   return Buffer.from(arrayBuffer);
 }
 
-async function readStreamChunksWithLimit(reader, maxInputBytes) {
+async function readStreamChunksWithLimit(reader, maxInputBytes, context) {
   const chunks = [];
   let totalBytes = 0;
 
@@ -55,54 +75,54 @@ async function readStreamChunksWithLimit(reader, maxInputBytes) {
     }
 
     totalBytes += value.byteLength;
-    assertImageSize(totalBytes, maxInputBytes);
+    assertSourceSize(totalBytes, maxInputBytes, context);
     chunks.push(Buffer.from(value));
   }
 
   return Buffer.concat(chunks);
 }
 
-async function bufferFromResponseWithLimit(response, maxInputBytes) {
-  assertRemoteContentLength(response, maxInputBytes);
+async function bufferFromResponseWithLimit(response, maxInputBytes, context) {
+  assertRemoteContentLength(response, maxInputBytes, context);
 
   const reader = response.body?.getReader?.();
 
   return reader
-    ? readStreamChunksWithLimit(reader, maxInputBytes)
-    : bufferFromArrayBufferWithLimit(response, maxInputBytes);
+    ? readStreamChunksWithLimit(reader, maxInputBytes, context)
+    : bufferFromArrayBufferWithLimit(response, maxInputBytes, context);
 }
 
-function assertRemoteFetchingAllowed(allowRemoteSource) {
+function assertRemoteFetchingAllowed(allowRemoteSource, context) {
   if (!allowRemoteSource) {
     throw new ImageRedactionError(
-      'Remote image URLs are disabled. Set ALLOW_REMOTE_IMAGE_SOURCE=true to enable them.',
+      context.remoteDisabledMessage,
       400,
-      'REMOTE_SOURCE_DISABLED'
+      context.remoteDisabledCode
     );
   }
 }
 
-function assertFetchAvailable() {
+function assertFetchAvailable(context) {
   if (typeof fetch !== 'function') {
     throw new ImageRedactionError(
-      'fetch is not available. Use Node.js 18+ or provide a fetch polyfill.',
+      'fetch is not available. Use a supported Node.js version or provide a fetch polyfill.',
       500,
-      'FETCH_UNAVAILABLE'
+      context.fetchUnavailableCode
     );
   }
 }
 
-function throwTimeoutError(error, fetchTimeoutMs) {
+function throwTimeoutError(error, fetchTimeoutMs, context) {
   if (error.name === 'AbortError') {
     throw new ImageRedactionError(
-      `Remote image fetch timed out after ${fetchTimeoutMs} ms.`,
+      `Remote ${context.label.toLowerCase()} fetch timed out after ${fetchTimeoutMs} ms.`,
       408,
-      'IMAGE_FETCH_TIMEOUT'
+      context.fetchTimeoutCode
     );
   }
 }
 
-async function fetchWithTimeout(source, options) {
+async function fetchWithTimeout(source, options, context) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.fetchTimeoutMs);
 
@@ -112,39 +132,39 @@ async function fetchWithTimeout(source, options) {
       signal: controller.signal
     });
   } catch (error) {
-    throwTimeoutError(error, options.fetchTimeoutMs);
+    throwTimeoutError(error, options.fetchTimeoutMs, context);
     throw error;
   } finally {
     clearTimeout(timeout);
   }
 }
 
-function assertFetchResponseOk(response) {
+function assertFetchResponseOk(response, context) {
   if (!response.ok) {
     throw new ImageRedactionError(
-      `Failed to fetch image: ${response.status} ${response.statusText}`,
+      `Failed to fetch ${context.label.toLowerCase()}: ${response.status} ${response.statusText}`,
       400,
-      'IMAGE_FETCH_FAILED'
+      context.fetchFailedCode
     );
   }
 }
 
-async function fetchImageToBuffer(source, options) {
-  assertRemoteFetchingAllowed(options.allowRemoteSource);
-  assertFetchAvailable();
+async function fetchSourceToBuffer(source, options, context) {
+  assertRemoteFetchingAllowed(options.allowRemoteSource, context);
+  assertFetchAvailable(context);
 
-  const response = await fetchWithTimeout(source, options);
+  const response = await fetchWithTimeout(source, options, context);
 
-  assertFetchResponseOk(response);
+  assertFetchResponseOk(response, context);
 
   return {
-    buffer: await bufferFromResponseWithLimit(response, options.maxInputBytes),
+    buffer: await bufferFromResponseWithLimit(response, options.maxInputBytes, context),
     mimeType: normalizeContentType(response.headers.get('content-type'), options.inputMimeType)
   };
 }
 
-function bufferSourceToBuffer(source, options) {
-  assertImageSize(source.byteLength, options.maxInputBytes);
+function bufferSourceToBuffer(source, options, context) {
+  assertSourceSize(source.byteLength, options.maxInputBytes, context);
 
   return {
     buffer: source,
@@ -152,18 +172,18 @@ function bufferSourceToBuffer(source, options) {
   };
 }
 
-function dataUrlToBuffer(source, options) {
+function dataUrlToBuffer(source, options, context) {
   const match = source.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
 
   if (!match) {
-    throw new ImageRedactionError('Invalid data URL.', 400, 'INVALID_DATA_URL');
+    throw new ImageRedactionError('Invalid data URL.', 400, context.invalidDataUrlCode);
   }
 
   const buffer = match[2]
     ? Buffer.from(match[3], 'base64')
     : Buffer.from(decodeURIComponent(match[3]), 'utf8');
 
-  assertImageSize(buffer.byteLength, options.maxInputBytes);
+  assertSourceSize(buffer.byteLength, options.maxInputBytes, context);
 
   return {
     buffer,
@@ -171,10 +191,10 @@ function dataUrlToBuffer(source, options) {
   };
 }
 
-function base64ToBuffer(source, options) {
+function base64ToBuffer(source, options, context) {
   const buffer = Buffer.from(source.replace(/\s/g, ''), 'base64');
 
-  assertImageSize(buffer.byteLength, options.maxInputBytes);
+  assertSourceSize(buffer.byteLength, options.maxInputBytes, context);
 
   return {
     buffer,
@@ -182,22 +202,24 @@ function base64ToBuffer(source, options) {
   };
 }
 
-export async function sourceToBuffer(source, options) {
+export async function sourceToBuffer(source, options, sourceContext = {}) {
+  const context = normalizeContext(sourceContext);
+
   if (Buffer.isBuffer(source)) {
-    return bufferSourceToBuffer(source, options);
+    return bufferSourceToBuffer(source, options, context);
   }
 
   if (isHttpUrl(source)) {
-    return fetchImageToBuffer(source, options);
+    return fetchSourceToBuffer(source, options, context);
   }
 
   if (isDataUrl(source)) {
-    return dataUrlToBuffer(source, options);
+    return dataUrlToBuffer(source, options, context);
   }
 
   if (typeof source === 'string') {
-    return base64ToBuffer(source, options);
+    return base64ToBuffer(source, options, context);
   }
 
-  throw new ImageRedactionError('Unsupported imageSource type.', 400, 'UNSUPPORTED_IMAGE_SOURCE');
+  throw new ImageRedactionError(context.unsupportedMessage, 400, 'UNSUPPORTED_SOURCE');
 }
